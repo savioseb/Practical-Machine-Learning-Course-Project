@@ -1,0 +1,234 @@
+---
+title: "Practical Machine Learning Prediction Project"
+author: "Savio Sebastian"
+date: "February 22, 2015"
+output:
+  html_document:
+    keep_md: yes
+    number_sections: yes
+    toc: yes
+---
+
+# Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. M
+
+ore information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+# Data
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+# Set Up - Environment
+A few packages are required to be used for this project. 
+
+The method `checkInstallPackages` is used to install / download packages as required.
+
+```{r loadPackages}
+
+checkInstallPackages <- function( packageName ) {
+    if ( !require( packageName , character.only = T ) ) {
+        message( paste( Sys.time() , "Install Package:" , packageName ) )
+        install.packages( 
+            paste0( "\"" , packageName , "\"" ) ,     ## to pass package names as variables
+            repos='http://cran.us.r-project.org' , 
+            verbose = F , quiet = T )
+        library( 
+            packageName , 
+            character.only = T )     ## to pass package names as variables to library()
+        if ( require( packageName , character.only = T ) ) {
+            message( paste( Sys.time() , packageName , "Installed and loaded" ) )
+        }
+    }
+}
+```
+
+## Required Packages
+```{r requiredPackages}
+checkInstallPackages( "caret" )
+checkInstallPackages( "knitr" )
+checkInstallPackages( "randomForest" )
+checkInstallPackages( "doMC" )
+checkInstallPackages( "e1071" )
+
+opts_chunk$set(cache=TRUE)          ## setting cache = true across the RMD
+registerDoMC(cores = 4)
+set.seed(140819)
+```
+
+# Getting and Cleaning Data
+
+## Downloading the Data File
+As mentioned before, a training and testing CSV File need to be downloaded from the links mentioned before.
+
+The method, `downloadFile` accepts url and destination file name which can be reused for both the downloads
+
+
+```{r downloadFiles}
+downloadFile <- function( urlString , fileName ) {
+    download.file( 
+        url = urlString , 
+        destfile = fileName , 
+        method = "curl" , quiet = T )
+}
+
+downloadFile( 
+    "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" , 
+    "pml-training.csv" )
+downloadFile( 
+    "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv" , 
+    "pml-testing.csv" )
+```
+
+## Loading the Data
+
+```{r loadingData}
+dsTraining <- read.csv( "pml-training.csv" )
+dsTesting  <- read.csv( "pml-testing.csv" )
+```
+
+## Studying The Testing Data
+```{r studyTestingData} 
+dsSummary <- function( dataSet ) {
+    print( paste( 
+        "No of Observations:" , dim( dataSet )[1] , 
+        "     No of Variables:" , dim( dataSet )[2] ) )
+    str( dataSet )
+    summary( dataSet )
+}
+
+dsSummary( dsTesting )
+
+```
+
+It is evident from the data that certain columns are not important for Testing & Training Data Sets since they only containt `NA` values. These columns are removed.
+
+The function `filterData` will do this.
+
+```{r removeNAColumns}
+## Remove NA Columns
+## Function to filter the features
+filterData <- function(dataSet) {
+  # Since we have lots of variables, remove any with NA's
+  # or have empty strings
+  tmpDataSet.keep <- !sapply(dataSet, function(x) any(is.na(x)))
+  dataSet <- dataSet[, tmpDataSet.keep]
+  tmpDataSet.keep <- !sapply(dataSet, function(x) any(x==""))
+  dataSet <- dataSet[, tmpDataSet.keep]
+
+  # Remove the columns that aren't the predictor variables
+  col.rm <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+              "cvtd_timestamp", "new_window", "num_window")
+  tmpDataSet.rm <- which(colnames(dataSet) %in% col.rm)
+  dataSet <- dataSet[, -tmpDataSet.rm]
+  
+  return(dataSet)
+}
+```
+
+
+```{r cleaningDataSet }
+dsTrainingCleaned <- filterData(dsTraining)
+dsTestingCleaned <- filterData(dsTesting)
+
+## setting factor on classe
+dsTrainingCleaned$classe <- factor( dsTrainingCleaned$classe )
+
+dsSummary( dsTrainingCleaned )
+dsSummary( dsTestingCleaned )
+```
+
+
+# Building the Prediction Model
+
+Three Models are built:
+
+* Random Forest
+* SVM (Radial Kernel)
+* KNN
+
+Parameters will be tuned via 5-fold cross validation.
+
+## Random Forest
+```{r randomForest}
+cvCtrl <- trainControl(
+    method = "cv", 
+    number = 5, 
+    allowParallel = TRUE, 
+    verboseIter = TRUE )
+
+m1 <- train(
+    classe ~ ., 
+    data = dsTrainingCleaned, 
+    method = "rf", 
+    trControl = cvCtrl)
+```
+
+## SVM (Radial Kernel)
+
+```{r SVM}
+m2 <- train(
+    classe ~ ., 
+    data = dsTrainingCleaned, 
+    method = "svmRadial", 
+    trControl = cvCtrl)
+```
+
+## KNN
+
+```{r KNN}
+m3 <- train(
+    classe ~ ., 
+    data = dsTrainingCleaned, 
+    method = "knn", 
+    trControl = cvCtrl)
+```
+
+## Investigate the Cross Validation Performance Accuracy
+
+```{r investigate}
+acc.tab <- data.frame( 
+    Model=c ( "Random Forest" , "SVM (radial)" , "KNN" ) ,
+    Accuracy=c(
+        round(max(head(m1$results)$Accuracy), 3 ) ,
+        round(max(head(m2$results)$Accuracy), 3 ) ,
+        round(max(head(m3$results)$Accuracy), 3 ) ) 
+    )
+```
+
+```{r kabeling}
+kable(acc.tab)
+```
+
+
+Random Forest model appears to have the highest cross-validation accuracy, with the SVM and KNN slightly lower.
+
+
+# Prediction
+```{r prediction}
+# Do the predictions
+test.pred.1 <- predict(m1, dsTestingCleaned)
+test.pred.2 <- predict(m2, dsTestingCleaned)
+test.pred.3 <- predict(m3, dsTestingCleaned)
+```
+
+```{r tabulate}
+# Make a table and check if they all agree
+pred.df <- data.frame(
+    rf.pred = test.pred.1, 
+    svm.pred = test.pred.2, 
+    knn.pred = test.pred.3 )
+pred.df$agree <- with( pred.df , rf.pred == svm.pred && rf.pred == knn.pred )
+all.agree <- all(pred.df$agree)
+```
+
+Here are the classifications predictions for the 3 models:
+
+```{r classification}
+colnames(pred.df) <- c("Random Forest", "SVM", "KNN", "All Agree?")
+kable(pred.df)
+```
